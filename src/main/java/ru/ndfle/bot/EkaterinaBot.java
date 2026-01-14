@@ -32,11 +32,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class EkaterinaBot extends TelegramLongPollingBot {
     private static final Logger log = LoggerFactory.getLogger(EkaterinaBot.class);
 
-    private static final String MEDIA1_CAPTION = """
-            <b>Как загрузить XML-файл с декларацией 3-НДФЛ на сайте ФНС</b>
-            %s
-            """;
+    // Новая ссылка (вместо отправки видео)
+    private static final String XML_RUTUBE_URL = "https://rutube.ru/video/7eebce5e241d7c12d0b4bfb7175c906b/?r=a";
 
+    // Оставил старую, если где-то ещё нужна
     private static final String XML_UPLOAD_URL = "https://ibkr-nalog.app/instructions/fns/upload-3ndfl-xml-file";
 
     private static final String DOC_UPLOAD_TEXT = """
@@ -123,101 +122,9 @@ public class EkaterinaBot extends TelegramLongPollingBot {
         long userId = msg.getFrom().getId();
         UserContext ctx = contextRepository.getOrCreate(userId);
 
-        if (ctx.state == ConversationState.DOC_UPLOAD_WAIT_MEDIA) {
-            handleDocUploadMessage(chatId, ctx, msg);
-            return;
-        }
-
         String text = msg.getText();
 
-        // If user is in BK text step
-        if (ctx.state == ConversationState.BK_WAIT_POSITION_TEXT || ctx.state == ConversationState.BK_WAIT_REAL_ESTATE_TEXT) {
-            if (text == null) {
-                executeSafely(simple(chatId, "Пожалуйста, отправьте ответ <b>текстом</b> сообщением."));
-                return;
-            }
-            SurveyService.SurveyResult res = surveyService.finishBkWithText(chatId, ctx, msg.getFrom(), text);
-            executeSafely(res.toUser());
-
-            if (res.adminHtml() != null && res.adminIds() != null) {
-                for (Long adminId : res.adminIds()) {
-                    SendMessage sm = new SendMessage();
-                    sm.setChatId(adminId);
-                    sm.setText(res.adminHtml());
-                    sm.setParseMode(ParseMode.HTML);
-                    sm.setDisableWebPagePreview(true);
-                    executeSafely(sm);
-                }
-            }
-            return;
-        }
-
-        // Review flow: waiting for comment
-        if (ctx.state == ConversationState.REVIEW_WAIT_COMMENT_TEXT) {
-            if (text == null || text.isBlank()) {
-                executeSafely(simple(chatId, "Пожалуйста, напишите <b>текстовый</b> комментарий одним сообщением ✍️"));
-                return;
-            }
-            int stars = ctx.reviewStars <= 0 ? 5 : ctx.reviewStars;
-            String comment = text.trim();
-
-            long reviewId = reviewRepository.insert(userId, stars, comment);
-
-            // Notify admins
-            String adminHtml = buildReviewAdminMessage(reviewId, msg.getFrom(), stars, comment);
-            for (Long adminId : adminService.listAdmins()) {
-                SendMessage sm = new SendMessage();
-                sm.setChatId(adminId);
-                sm.setText(adminHtml);
-                sm.setParseMode(ParseMode.HTML);
-                sm.setDisableWebPagePreview(true);
-                executeSafely(sm);
-            }
-
-            // Reset review state and show menu (/start)
-            ctx.state = ConversationState.NONE;
-            ctx.reviewStars = 0;
-            contextRepository.save(ctx);
-
-            executeSafely(simple(chatId, "✅ Спасибо за отзыв!"));
-            executeSafely(navigationService.toMenu(chatId, ctx));
-            return;
-        }
-
-        // Admin broadcast flow
-        if (ctx.state == ConversationState.ADMIN_WAIT_BROADCAST_TEXT) {
-            if (text == null) return;
-
-            if (!adminService.isAdmin(userId)) {
-                ctx.state = ConversationState.NONE;
-                contextRepository.save(ctx);
-                executeSafely(simple(chatId, "⛔ Доступ закрыт."));
-                return;
-            }
-
-            var br = adminService.performBroadcast(chatId, ctx, text);
-
-            int ok = 0;
-            int fail = 0;
-            for (Long uid : br.userIds()) {
-                SendMessage sm = new SendMessage();
-                sm.setChatId(uid);
-                sm.setText(br.htmlText());
-                sm.setParseMode(ParseMode.HTML);
-                sm.setDisableWebPagePreview(true);
-                try {
-                    execute(sm);
-                    ok++;
-                } catch (Exception ex) {
-                    fail++;
-                }
-            }
-
-            executeSafely(simple(chatId, "✅ Рассылка завершена.\n\nУспешно: <b>" + ok + "</b>\nОшибок: <b>" + fail + "</b>"));
-            return;
-        }
-
-        // Commands
+        // ✅ ВАЖНО: команды обрабатываем ПЕРВЫМИ (даже если ждём документы)
         if (text != null && text.startsWith("/")) {
             String[] parts = text.trim().split("\\s+");
             String cmd = parts[0].toLowerCase(Locale.ROOT);
@@ -276,6 +183,99 @@ public class EkaterinaBot extends TelegramLongPollingBot {
             return;
         }
 
+        // Document upload flow
+        if (ctx.state == ConversationState.DOC_UPLOAD_WAIT_MEDIA) {
+            handleDocUploadMessage(chatId, ctx, msg);
+            return;
+        }
+
+        // If user is in BK text step
+        if (ctx.state == ConversationState.BK_WAIT_POSITION_TEXT || ctx.state == ConversationState.BK_WAIT_REAL_ESTATE_TEXT) {
+            if (text == null) {
+                executeSafely(simple(chatId, "Пожалуйста, отправьте ответ <b>текстом</b> сообщением."));
+                return;
+            }
+            SurveyService.SurveyResult res = surveyService.finishBkWithText(chatId, ctx, msg.getFrom(), text);
+            executeSafely(res.toUser());
+
+            if (res.adminHtml() != null && res.adminIds() != null) {
+                for (Long adminId : res.adminIds()) {
+                    SendMessage sm = new SendMessage();
+                    sm.setChatId(adminId);
+                    sm.setText(res.adminHtml());
+                    sm.setParseMode(ParseMode.HTML);
+                    sm.setDisableWebPagePreview(true);
+                    executeSafely(sm);
+                }
+            }
+            return;
+        }
+
+        // Review flow: waiting for comment
+        if (ctx.state == ConversationState.REVIEW_WAIT_COMMENT_TEXT) {
+            if (text == null || text.isBlank()) {
+                executeSafely(simple(chatId, "Пожалуйста, напишите <b>текстовый</b> комментарий одним сообщением ✍️"));
+                return;
+            }
+            int stars = ctx.reviewStars <= 0 ? 5 : ctx.reviewStars;
+            String comment = text.trim();
+
+            long reviewId = reviewRepository.insert(userId, stars, comment);
+
+            // Notify admins
+            String adminHtml = buildReviewAdminMessage(reviewId, msg.getFrom(), stars, comment);
+            for (Long adminId : adminService.listAdmins()) {
+                SendMessage sm = new SendMessage();
+                sm.setChatId(adminId);
+                sm.setText(adminHtml);
+                sm.setParseMode(ParseMode.HTML);
+                sm.setDisableWebPagePreview(true);
+                executeSafely(sm);
+            }
+
+            // Reset review state and show menu
+            ctx.state = ConversationState.NONE;
+            ctx.reviewStars = 0;
+            contextRepository.save(ctx);
+
+            executeSafely(simple(chatId, "✅ Спасибо за отзыв!"));
+            executeSafely(navigationService.toMenu(chatId, ctx));
+            return;
+        }
+
+        // Admin broadcast flow
+        if (ctx.state == ConversationState.ADMIN_WAIT_BROADCAST_TEXT) {
+            if (text == null) return;
+
+            if (!adminService.isAdmin(userId)) {
+                ctx.state = ConversationState.NONE;
+                contextRepository.save(ctx);
+                executeSafely(simple(chatId, "⛔ Доступ закрыт."));
+                return;
+            }
+
+            var br = adminService.performBroadcast(chatId, ctx, text);
+
+            int ok = 0;
+            int fail = 0;
+            for (Long uid : br.userIds()) {
+                SendMessage sm = new SendMessage();
+                sm.setChatId(uid);
+                sm.setText(br.htmlText());
+                sm.setParseMode(ParseMode.HTML);
+                sm.setDisableWebPagePreview(true);
+                try {
+                    execute(sm);
+                    ok++;
+                } catch (Exception ex) {
+                    fail++;
+                }
+            }
+
+            executeSafely(simple(chatId, "✅ Рассылка завершена.\n\nУспешно: <b>" + ok + "</b>\nОшибок: <b>" + fail + "</b>"));
+            return;
+        }
+
         // Default: show menu (for text messages)
         if (text != null) {
             executeSafely(navigationService.toMenu(chatId, ctx));
@@ -288,7 +288,7 @@ public class EkaterinaBot extends TelegramLongPollingBot {
 
         boolean hasMedia = msg.hasPhoto() || msg.hasDocument() || msg.hasVideo() || msg.hasAudio() || msg.hasVoice();
         if (!hasMedia) {
-            // If user sends text while waiting, just remind
+            // If user sends text while waiting, just remind (команды уже обработаны выше)
             if (msg.getText() != null && !msg.getText().isBlank()) {
                 executeSafely(simple(chatId, "Пришлите, пожалуйста, фото/файлы документами. Чтобы выйти — нажмите «Вернуться в меню» или отправьте /start."));
             }
@@ -463,7 +463,7 @@ public class EkaterinaBot extends TelegramLongPollingBot {
         }
 
         if (data.equals("MEDIA:VIDEO2")) {
-            // Send 2.mp4
+            // Send 2.mp4 (как было)
             SendVideo sv = mediaService.buildVideo(chatId, "video2", "2.mp4", null, menuOnlyMarkup());
             try {
                 Message sent = execute(sv);
@@ -476,25 +476,18 @@ public class EkaterinaBot extends TelegramLongPollingBot {
         }
 
         if (data.equals("MEDIA:VIDEO1_XML")) {
-            // Send 1.mp4 + caption with link
-            InlineKeyboardMarkup m = InlineKeyboardMarkup.builder()
-                    .keyboard(List.of(
-                            List.of(InlineKeyboardButton.builder().text("🔗 Открыть инструкцию").url(XML_UPLOAD_URL).build()),
-                            List.of(InlineKeyboardButton.builder().text("🏠 Вернуться в меню").callbackData("M").build())
-                    ))
-                    .build();
+            // ✅ Вместо видео — сообщение с Rutube ссылкой
+            SendMessage sm = new SendMessage();
+            sm.setChatId(chatId);
+            sm.setParseMode(ParseMode.HTML);
+            sm.setText("""
+                    🎥 <b>Как отправить декларацию в XML</b>
 
-            String caption = String.format(MEDIA1_CAPTION, XML_UPLOAD_URL);
-
-            SendVideo sv = mediaService.buildVideo(chatId, "video1", "1.mp4", caption, m);
-            try {
-                Message sent = execute(sv);
-                mediaService.updateCacheFromSentMessage("video1", sent);
-            } catch (Exception e) {
-                log.warn("send video1 failed: {}", e.toString());
-                executeSafely(simple(chatId, "⚠️ Не удалось отправить видео. Проверьте, что файл <code>media/1.mp4</code> существует на сервере."));
-                executeSafely(simple(chatId, "Ссылка на инструкцию: " + XML_UPLOAD_URL));
-            }
+                    Видео-инструкция:
+                    """ + XML_RUTUBE_URL);
+            // Можно оставить превью (не отключаем)
+            sm.setReplyMarkup(menuOnlyMarkup());
+            executeSafely(sm);
             return;
         }
     }
