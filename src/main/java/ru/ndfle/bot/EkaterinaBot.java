@@ -23,7 +23,6 @@ import ru.ndfle.bot.service.MediaService;
 import ru.ndfle.bot.service.NavigationService;
 import ru.ndfle.bot.service.SurveyService;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class EkaterinaBot extends TelegramLongPollingBot {
     private static final Logger log = LoggerFactory.getLogger(EkaterinaBot.class);
 
-    // Новая ссылка (вместо отправки видео)
+    // ИП: ссылка Rutube (вместо отправки видео)
     private static final String XML_RUTUBE_URL = "https://rutube.ru/video/7eebce5e241d7c12d0b4bfb7175c906b/?r=a";
 
     // Оставил старую, если где-то ещё нужна
@@ -476,18 +475,30 @@ public class EkaterinaBot extends TelegramLongPollingBot {
         }
 
         if (data.equals("MEDIA:VIDEO1_XML")) {
-            // ✅ Вместо видео — сообщение с Rutube ссылкой
+            // ✅ ИП: вместо видео — сообщение с Rutube ссылкой
             SendMessage sm = new SendMessage();
             sm.setChatId(chatId);
             sm.setParseMode(ParseMode.HTML);
             sm.setText("""
-                    🎥 <b>Как отправить декларацию в XML</b>
+                    🎥 <b>Как отправить декларацию в XML для ИП</b>
 
                     Видео-инструкция:
                     """ + XML_RUTUBE_URL);
-            // Можно оставить превью (не отключаем)
             sm.setReplyMarkup(menuOnlyMarkup());
             executeSafely(sm);
+            return;
+        }
+
+        if (data.equals("MEDIA:VIDEO1_FL")) {
+            // ✅ Физлица: отправляем видео 1.mp4
+            SendVideo sv = mediaService.buildVideo(chatId, "video1", "1.mp4", null, menuOnlyMarkup());
+            try {
+                Message sent = execute(sv);
+                mediaService.updateCacheFromSentMessage("video1", sent);
+            } catch (Exception e) {
+                log.warn("send video1 failed: {}", e.toString());
+                executeSafely(simple(chatId, "⚠️ Не удалось отправить видео. Проверьте, что файл <code>media/1.mp4</code> существует на сервере."));
+            }
             return;
         }
     }
@@ -534,9 +545,7 @@ public class EkaterinaBot extends TelegramLongPollingBot {
         String tag = (user.getUserName() == null || user.getUserName().isBlank()) ? "—" : "@" + escapeHtml(user.getUserName());
         return "📎 <b>Документы от клиента</b>\n"
                 + "👤 " + mention + "\n"
-                + "🔖 " + tag + "\n"
-                + "🆔 <code>" + user.getId() + "</code>\n"
-                + "🕒 " + escapeHtml(OffsetDateTime.now().toString());
+                + "🔖 " + tag + "\n";
     }
 
     private static String buildReviewAdminMessage(long reviewId, User user, int stars, String comment) {
